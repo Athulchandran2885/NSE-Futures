@@ -109,52 +109,38 @@ def run_scanner(cm: pd.DataFrame, fo: pd.DataFrame, n100_symbols: set, date: dat
 
         m1_px = float(m1["ClsPric"].iloc[0])
         m1_exp = m1["XpryDt"].iloc[0]
-        m1_oi = float(m1["OpnIntrst"].iloc[0]) if "OpnIntrst" in m1.columns else None
-        m1_vol = float(m1["TtlTradgVol"].iloc[0]) if "TtlTradgVol" in m1.columns else None
-        days_m1 = (m1_exp - date).days
-        m1_prem_abs = m1_px - spot_px
-        m1_prem_pct = (m1_prem_abs / spot_px) * 100
-        m1_ann = m1_prem_pct * (365 / days_m1) if days_m1 > 0 else None
 
         row = {
-            "Symbol": sym, "Spot": spot_px,
-            "M1_Future": m1_px, "M1_Expiry": m1_exp.date(),
-            "M1_OI": m1_oi, "M1_Volume": m1_vol,
-            "M1_Premium_Rs": round(m1_prem_abs, 2),
-            "M1_Premium_Pct": round(m1_prem_pct, 2),
-            "M1_Annualized_Basis_Pct": round(m1_ann, 2) if m1_ann is not None else None,
+            "Symbol": sym,
+            "Spot": spot_px,
+            "M1_Future": m1_px,
+            "M1_Expiry": m1_exp.date(),
         }
 
         if not m2.empty:
             m2_px = float(m2["ClsPric"].iloc[0])
             m2_exp = m2["XpryDt"].iloc[0]
-            m2_oi = float(m2["OpnIntrst"].iloc[0]) if "OpnIntrst" in m2.columns else None
-            m2_vol = float(m2["TtlTradgVol"].iloc[0]) if "TtlTradgVol" in m2.columns else None
-            days_m2 = (m2_exp - date).days
-            m2_prem_abs = m2_px - spot_px
-            m2_prem_pct = (m2_prem_abs / spot_px) * 100
-            m2_ann = m2_prem_pct * (365 / days_m2) if days_m2 > 0 else None
             spread_abs = m2_px - m1_px
             spread_pct = (spread_abs / m1_px) * 100
             row.update({
-                "M2_Future": m2_px, "M2_Expiry": m2_exp.date(),
-                "M2_OI": m2_oi, "M2_Volume": m2_vol,
-                "M2_Premium_Rs": round(m2_prem_abs, 2),
-                "M2_Premium_Pct": round(m2_prem_pct, 2),
-                "M2_Annualized_Basis_Pct": round(m2_ann, 2) if m2_ann is not None else None,
+                "M2_Future": m2_px,
+                "M2_Expiry": m2_exp.date(),
                 "M2_minus_M1_Rs": round(spread_abs, 2),
                 "M2_minus_M1_Pct": round(spread_pct, 2),
-                "Curve": "Contango" if m2_px > m1_px else ("Backwardation" if m2_px < m1_px else "Flat"),
             })
         else:
-            row.update({k: "N/A" for k in [
-                "M2_Future", "M2_Expiry", "M2_OI", "M2_Volume", "M2_Premium_Rs",
-                "M2_Premium_Pct", "M2_Annualized_Basis_Pct", "M2_minus_M1_Rs", "M2_minus_M1_Pct"]})
-            row["Curve"] = "N/A (no M2 contract)"
+            row.update({
+                "M2_Future": "N/A", "M2_Expiry": "N/A",
+                "M2_minus_M1_Rs": "N/A", "M2_minus_M1_Pct": "N/A",
+            })
 
         rows.append(row)
 
-    out = pd.DataFrame(rows).sort_values("M1_Premium_Pct", ascending=False).reset_index(drop=True)
+    cols = ["Symbol", "Spot", "M1_Future", "M1_Expiry", "M2_Future", "M2_Expiry",
+            "M2_minus_M1_Rs", "M2_minus_M1_Pct"]
+    out = pd.DataFrame(rows, columns=cols)
+    numeric_spread = pd.to_numeric(out["M2_minus_M1_Pct"], errors="coerce")
+    out = out.assign(_sort=numeric_spread).sort_values("_sort", ascending=False).drop(columns="_sort").reset_index(drop=True)
     exc = pd.DataFrame(excluded, columns=["Symbol", "Reason"])
     return out, exc
 
@@ -203,12 +189,12 @@ if cm_df is not None and fo_df is not None:
 
         st.success(f"Checked {len(n100_symbols)} Nifty 100 constituents — {len(out)} F&O-eligible with data, {len(exc)} excluded.")
 
-        tab1, tab2, tab3 = st.tabs(["Full table", "Top 10 M1 premium", "Excluded stocks"])
+        tab1, tab2, tab3 = st.tabs(["Full table", "Top 10 by M2-M1 spread %", "Excluded stocks"])
         with tab1:
             st.dataframe(out, use_container_width=True)
             st.download_button("Download full CSV", out.to_csv(index=False), "nifty100_scanner.csv")
         with tab2:
-            top10 = out.head(10).set_index("Symbol")["M1_Premium_Pct"]
+            top10 = out.head(10).set_index("Symbol")["M2_minus_M1_Pct"]
             st.bar_chart(top10)
         with tab3:
             st.dataframe(exc, use_container_width=True)
