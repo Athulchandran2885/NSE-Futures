@@ -103,12 +103,19 @@ def run_scanner(cm: pd.DataFrame, fo: pd.DataFrame, n100_symbols: set, date: dat
         spot_px = float(sp["Spot"].iloc[0])
         m1 = sub[sub["rank"] == 1]
         m2 = sub[sub["rank"] == 2]
+        m3 = sub[sub["rank"] == 3]
         if m1.empty:
             excluded.append((sym, "M1 contract missing"))
             continue
 
         m1_px = float(m1["ClsPric"].iloc[0])
         m1_exp = m1["XpryDt"].iloc[0]
+        lot_size = None
+        if "NewBrdLotQty" in m1.columns:
+            try:
+                lot_size = int(float(m1["NewBrdLotQty"].iloc[0]))
+            except (ValueError, TypeError):
+                lot_size = None
 
         row = {
             "Symbol": sym,
@@ -122,22 +129,36 @@ def run_scanner(cm: pd.DataFrame, fo: pd.DataFrame, n100_symbols: set, date: dat
             m2_exp = m2["XpryDt"].iloc[0]
             spread_abs = m2_px - m1_px
             spread_pct = (spread_abs / m1_px) * 100
-            row.update({
-                "M2_Future": m2_px,
-                "M2_Expiry": m2_exp.date(),
-                "M2_minus_M1_Rs": round(spread_abs, 2),
-                "M2_minus_M1_Pct": round(spread_pct, 2),
-            })
+            row.update({"M2_Future": m2_px, "M2_Expiry": m2_exp.date()})
         else:
-            row.update({
-                "M2_Future": "N/A", "M2_Expiry": "N/A",
-                "M2_minus_M1_Rs": "N/A", "M2_minus_M1_Pct": "N/A",
-            })
+            spread_abs = spread_pct = None
+            row.update({"M2_Future": "N/A", "M2_Expiry": "N/A"})
+
+        if not m3.empty:
+            m3_px = float(m3["ClsPric"].iloc[0])
+            m3_exp = m3["XpryDt"].iloc[0]
+            row.update({"M3_Future": m3_px, "M3_Expiry": m3_exp.date()})
+        else:
+            row.update({"M3_Future": "N/A", "M3_Expiry": "N/A"})
+
+        row["Lot_Size"] = lot_size if lot_size is not None else "N/A"
+
+        if spread_abs is not None:
+            row["M2_minus_M1_Rs"] = round(spread_abs, 2)
+            row["M2_minus_M1_Pct"] = round(spread_pct, 2)
+            row["M2_minus_M1_Value_Rs"] = (
+                round(spread_abs * lot_size, 2) if lot_size is not None else "N/A"
+            )
+        else:
+            row["M2_minus_M1_Rs"] = "N/A"
+            row["M2_minus_M1_Pct"] = "N/A"
+            row["M2_minus_M1_Value_Rs"] = "N/A"
 
         rows.append(row)
 
     cols = ["Symbol", "Spot", "M1_Future", "M1_Expiry", "M2_Future", "M2_Expiry",
-            "M2_minus_M1_Rs", "M2_minus_M1_Pct"]
+            "M3_Future", "M3_Expiry", "Lot_Size",
+            "M2_minus_M1_Rs", "M2_minus_M1_Pct", "M2_minus_M1_Value_Rs"]
     out = pd.DataFrame(rows, columns=cols)
     numeric_spread = pd.to_numeric(out["M2_minus_M1_Pct"], errors="coerce")
     out = out.assign(_sort=numeric_spread).sort_values("_sort", ascending=False).drop(columns="_sort").reset_index(drop=True)
